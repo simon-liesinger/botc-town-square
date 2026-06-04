@@ -1044,17 +1044,22 @@ function renderRing() {
 }
 
 // --- Long-press + tap on tokens ---
-let lpTimer = null, lpFired = false, lpStart = null, lpIdx = -1, lpEl = null;
+// Pointer-based to support both. Movement only kills the long-press timer;
+// a short up-tap still opens the seat sheet even after a little finger jitter.
+let lpTimer = null, lpFired = false, lpStart = null, lpIdx = -1, lpEl = null, lpMoved = false;
+const LP_MOVE_TAP_CANCEL = 22;   // px of finger travel before we give up on tap too
+const LP_MOVE_HOLD_CANCEL = 14;  // px of finger travel before we drop the long-press timer
 function tokenPointerDown(e) {
   const tok = e.target.closest('.token');
   if (!tok) return;
   lpIdx = parseInt(tok.dataset.idx, 10);
   lpEl = tok;
   lpFired = false;
+  lpMoved = false;
   lpStart = { x: e.clientX, y: e.clientY };
   tok.classList.add('pressed');
-  try { tok.setPointerCapture(e.pointerId); } catch (_) {}
   lpTimer = setTimeout(() => {
+    if (lpIdx < 0) return;
     lpFired = true;
     if (navigator.vibrate) navigator.vibrate(15);
     openTagSheet(lpIdx);
@@ -1064,18 +1069,25 @@ function tokenPointerDown(e) {
 function tokenPointerUp(e) {
   if (lpEl) lpEl.classList.remove('pressed');
   clearTimeout(lpTimer);
-  if (!lpFired && lpIdx >= 0) openSheet(lpIdx);
-  lpIdx = -1; lpEl = null;
+  if (!lpFired && !lpMoved && lpIdx >= 0) openSheet(lpIdx);
+  lpIdx = -1; lpEl = null; lpFired = false; lpMoved = false; lpStart = null;
 }
 function tokenPointerCancel(e) {
   if (lpEl) lpEl.classList.remove('pressed');
   clearTimeout(lpTimer);
-  lpFired = false;
-  lpIdx = -1; lpEl = null;
+  lpIdx = -1; lpEl = null; lpFired = false; lpMoved = false; lpStart = null;
 }
 function tokenPointerMove(e) {
   if (!lpStart) return;
-  if (Math.abs(e.clientX - lpStart.x) > 8 || Math.abs(e.clientY - lpStart.y) > 8) tokenPointerCancel(e);
+  const dx = Math.abs(e.clientX - lpStart.x);
+  const dy = Math.abs(e.clientY - lpStart.y);
+  if (dx > LP_MOVE_HOLD_CANCEL || dy > LP_MOVE_HOLD_CANCEL) {
+    clearTimeout(lpTimer);
+  }
+  if (dx > LP_MOVE_TAP_CANCEL || dy > LP_MOVE_TAP_CANCEL) {
+    lpMoved = true;
+    if (lpEl) lpEl.classList.remove('pressed');
+  }
 }
 ringEl.addEventListener('pointerdown', tokenPointerDown);
 ringEl.addEventListener('pointerup', tokenPointerUp);
