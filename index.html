@@ -177,7 +177,10 @@ body.fb-enabled .room-row { display: flex; }
   user-select: none;
   padding: 0;
   font-family: inherit;
-  touch-action: none; /* enable pointer-based long-press */
+  touch-action: manipulation;       /* let native click fire fast & reliably */
+  -webkit-touch-callout: none;      /* no iOS context menu on long-press */
+  -webkit-user-select: none;
+  user-select: none;
 }
 .token.pressed { transform: scale(0.92); }
 .token .seat-num {
@@ -1043,56 +1046,59 @@ function renderRing() {
   });
 }
 
-// --- Long-press + tap on tokens ---
-// Pointer-based to support both. Movement only kills the long-press timer;
-// a short up-tap still opens the seat sheet even after a little finger jitter.
-let lpTimer = null, lpFired = false, lpStart = null, lpIdx = -1, lpEl = null, lpMoved = false;
-const LP_MOVE_TAP_CANCEL = 22;   // px of finger travel before we give up on tap too
-const LP_MOVE_HOLD_CANCEL = 14;  // px of finger travel before we drop the long-press timer
+// --- Tap (native click) + long-press (pointerdown timer) on tokens ---
+// Tap uses the browser's click event — most reliable cross-device behaviour.
+// Long-press is a 500ms timer started on pointerdown; if it fires we open the
+// tag sheet and set a flag to swallow the subsequent click. Movement >= ~14px
+// cancels the timer so a drag doesn't accidentally trigger long-press.
+let lpTimer = null, lpStart = null, lpEl = null, lpPointerType = '';
+let suppressNextClick = false;
+const LP_MOVE_CANCEL = 14;
+
 function tokenPointerDown(e) {
   const tok = e.target.closest('.token');
   if (!tok) return;
-  lpIdx = parseInt(tok.dataset.idx, 10);
+  const idx = parseInt(tok.dataset.idx, 10);
   lpEl = tok;
-  lpFired = false;
-  lpMoved = false;
   lpStart = { x: e.clientX, y: e.clientY };
+  lpPointerType = e.pointerType || 'touch';
   tok.classList.add('pressed');
+  clearTimeout(lpTimer);
   lpTimer = setTimeout(() => {
-    if (lpIdx < 0) return;
-    lpFired = true;
+    lpTimer = null;
+    if (!lpEl) return;
     if (navigator.vibrate) navigator.vibrate(15);
-    openTagSheet(lpIdx);
-    if (lpEl) lpEl.classList.remove('pressed');
+    suppressNextClick = true;
+    openTagSheet(idx);
+    lpEl.classList.remove('pressed');
+    lpEl = null; lpStart = null;
   }, 500);
 }
-function tokenPointerUp(e) {
+function tokenPointerEnd() {
   if (lpEl) lpEl.classList.remove('pressed');
-  clearTimeout(lpTimer);
-  if (!lpFired && !lpMoved && lpIdx >= 0) openSheet(lpIdx);
-  lpIdx = -1; lpEl = null; lpFired = false; lpMoved = false; lpStart = null;
-}
-function tokenPointerCancel(e) {
-  if (lpEl) lpEl.classList.remove('pressed');
-  clearTimeout(lpTimer);
-  lpIdx = -1; lpEl = null; lpFired = false; lpMoved = false; lpStart = null;
+  if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+  lpEl = null; lpStart = null;
 }
 function tokenPointerMove(e) {
-  if (!lpStart) return;
-  const dx = Math.abs(e.clientX - lpStart.x);
-  const dy = Math.abs(e.clientY - lpStart.y);
-  if (dx > LP_MOVE_HOLD_CANCEL || dy > LP_MOVE_HOLD_CANCEL) {
-    clearTimeout(lpTimer);
-  }
-  if (dx > LP_MOVE_TAP_CANCEL || dy > LP_MOVE_TAP_CANCEL) {
-    lpMoved = true;
-    if (lpEl) lpEl.classList.remove('pressed');
+  if (!lpStart || !lpTimer) return;
+  if (Math.abs(e.clientX - lpStart.x) > LP_MOVE_CANCEL ||
+      Math.abs(e.clientY - lpStart.y) > LP_MOVE_CANCEL) {
+    tokenPointerEnd();
   }
 }
+function tokenClick(e) {
+  const tok = e.target.closest('.token');
+  if (!tok) return;
+  if (suppressNextClick) { suppressNextClick = false; return; }
+  const idx = parseInt(tok.dataset.idx, 10);
+  openSheet(idx);
+}
 ringEl.addEventListener('pointerdown', tokenPointerDown);
-ringEl.addEventListener('pointerup', tokenPointerUp);
-ringEl.addEventListener('pointercancel', tokenPointerCancel);
+ringEl.addEventListener('pointerup', tokenPointerEnd);
+ringEl.addEventListener('pointercancel', tokenPointerEnd);
+ringEl.addEventListener('pointerleave', tokenPointerEnd);
 ringEl.addEventListener('pointermove', tokenPointerMove);
+ringEl.addEventListener('click', tokenClick);
 ringEl.addEventListener('contextmenu', e => e.preventDefault());
 
 // --- Seat sheet (character + life) ---
