@@ -177,7 +177,7 @@ body.fb-enabled .room-row { display: flex; }
   user-select: none;
   padding: 0;
   font-family: inherit;
-  touch-action: manipulation;       /* let native click fire fast & reliably */
+  touch-action: none;               /* don't let the browser steal the touch as a scroll */
   -webkit-touch-callout: none;      /* no iOS context menu on long-press */
   -webkit-user-select: none;
   user-select: none;
@@ -534,6 +534,44 @@ body.tag-sheet-open #tag-sheet { transform: translateY(0); }
   font-size: 12px;
   padding: 8px;
 }
+
+/* Debug overlay — enable with #debug in the URL, disable with #nodebug */
+#dbg-overlay {
+  position: fixed;
+  bottom: 6px; left: 6px;
+  width: calc(100vw - 12px);
+  max-width: 260px;
+  max-height: 38vh;
+  background: rgba(0,0,0,0.88);
+  border: 1px solid #555;
+  color: #b0ff8e;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  z-index: 200;
+  display: none;
+  pointer-events: auto;
+}
+body.dbg-on #dbg-overlay { display: block; }
+#dbg-overlay .dbg-head {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 700; color: #ffaaaa; margin-bottom: 2px;
+}
+#dbg-overlay .dbg-head .sp { flex: 1; }
+#dbg-overlay button {
+  background: #333; color: #b0ff8e;
+  border: 1px solid #555; font-size: 10px;
+  padding: 1px 6px; border-radius: 4px;
+  font-family: inherit; cursor: pointer;
+}
+#dbg-overlay pre {
+  max-height: 30vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
 </style>
 </head>
 <body class="script-tb">
@@ -592,6 +630,10 @@ body.tag-sheet-open #tag-sheet { transform: translateY(0); }
   </div>
 </div>
 
+<div id="dbg-overlay">
+  <div class="dbg-head">debug<span class="sp"></span><button id="dbg-clear" type="button">clear</button><button id="dbg-off" type="button">off</button></div>
+  <pre id="dbg-log"></pre>
+</div>
 <div id="tag-sheet-bg" class="sheet-bg"></div>
 <div id="tag-sheet" class="sheet" role="dialog" aria-modal="true">
   <div class="sheet-head">
@@ -788,6 +830,29 @@ const CHARACTERS = [
 
 const FACTION_ORDER = ['townsfolk','outsider','minion','demon','traveller'];
 const FACTION_LABELS = {townsfolk:'Townsfolk',outsider:'Outsiders',minion:'Minions',demon:'Demons',traveller:'Travellers'};
+
+// --- Debug overlay -------------------------------------------------
+// Persisted: visiting once with #debug in the URL keeps it on forever.
+// Visit with #nodebug to turn it back off.
+const DBG_KEY = 'botc-debug';
+if (location.hash.includes('nodebug')) localStorage.removeItem(DBG_KEY);
+else if (location.hash.includes('debug')) localStorage.setItem(DBG_KEY, '1');
+const DEBUG = localStorage.getItem(DBG_KEY) === '1';
+if (DEBUG) document.body.classList.add('dbg-on');
+function dbg(msg) {
+  if (!DEBUG) return;
+  const el = document.getElementById('dbg-log');
+  if (!el) return;
+  const t = new Date().toISOString().slice(14, 22);
+  el.textContent = (t + ' ' + msg + '\n' + (el.textContent || '')).slice(0, 2000);
+}
+document.getElementById('dbg-clear').addEventListener('click', () => {
+  document.getElementById('dbg-log').textContent = '';
+});
+document.getElementById('dbg-off').addEventListener('click', () => {
+  localStorage.removeItem(DBG_KEY);
+  document.body.classList.remove('dbg-on');
+});
 
 function normId(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
 CHARACTERS.forEach(c => { c.id = normId(c.n); });
@@ -1089,13 +1154,15 @@ const TAP_MOVE_CANCEL = 28;  // travel that cancels the tap too (drag, not tap)
 
 function triggerTap(idx) {
   const now = Date.now();
-  if (idx === lastTapIdx && now - lastTapAt < 500) return; // dedup pointerup+click
+  if (idx === lastTapIdx && now - lastTapAt < 500) { dbg('TAP dedup idx=' + idx); return; }
   lastTapIdx = idx; lastTapAt = now;
+  dbg('TAP -> openSheet ' + idx);
   openSheet(idx);
 }
 
 function tokenPointerDown(e) {
   const tok = e.target.closest('.token');
+  dbg('PD tgt=' + (e.target.tagName || '?') + ' tok=' + (tok ? tok.dataset.idx : 'null') + ' ptr=' + e.pointerType);
   if (!tok) return;
   const idx = parseInt(tok.dataset.idx, 10);
   lpEl = tok;
@@ -1120,6 +1187,7 @@ function tokenPointerUp(e) {
   const start = lpStart;
   const fired = lpFired;
   const cancelled = lpCancelled;
+  dbg('PU tok=' + (tok ? tok.dataset.idx : 'null') + ' fired=' + fired + ' canc=' + cancelled + ' sup=' + suppressNextClick + (start ? ' dx=' + Math.round(e.clientX - start.x) + ' dy=' + Math.round(e.clientY - start.y) : ''));
   if (tok) tok.classList.remove('pressed');
   if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
   lpEl = null; lpStart = null; lpFired = false; lpCancelled = false;
@@ -1132,6 +1200,7 @@ function tokenPointerUp(e) {
   }
 }
 function tokenPointerCancel() {
+  dbg('PC tok=' + (lpEl ? lpEl.dataset.idx : 'null'));
   if (lpEl) lpEl.classList.remove('pressed');
   if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
   lpEl = null; lpStart = null; lpFired = false; lpCancelled = false;
@@ -1149,6 +1218,7 @@ function tokenPointerMove(e) {
 }
 function tokenClick(e) {
   const tok = e.target.closest('.token');
+  dbg('CK tgt=' + (e.target.tagName || '?') + ' tok=' + (tok ? tok.dataset.idx : 'null') + ' sup=' + suppressNextClick);
   if (!tok) return;
   if (suppressNextClick) { suppressNextClick = false; return; }
   const idx = parseInt(tok.dataset.idx, 10);
