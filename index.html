@@ -35,8 +35,6 @@ h1 {
   letter-spacing: 1.5px;
   margin-bottom: 6px;
   font-weight: 700;
-  cursor: pointer;
-  user-select: none;
 }
 .script-row { display: flex; gap: 5px; align-items: center; }
 .script-btn {
@@ -537,7 +535,28 @@ body.tag-sheet-open #tag-sheet { transform: translateY(0); }
   padding: 8px;
 }
 
-/* Debug overlay — enable with #debug in the URL, disable with #nodebug */
+/* Debug overlay — toggle with the tiny fab in the bottom-left corner */
+#dbg-fab {
+  position: fixed;
+  bottom: 4px; left: 4px;
+  width: 20px; height: 20px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 50%;
+  color: rgba(255,255,255,0.28);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: ui-monospace, Menlo, monospace;
+  cursor: pointer;
+  z-index: 201;
+  padding: 0;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+body.dbg-on #dbg-fab { display: none; }
 #dbg-overlay {
   position: fixed;
   bottom: 6px; left: 6px;
@@ -632,6 +651,7 @@ body.dbg-on #dbg-overlay { display: block; }
   </div>
 </div>
 
+<button id="dbg-fab" type="button" aria-label="Toggle debug log">dbg</button>
 <div id="dbg-overlay">
   <div class="dbg-head">debug<span class="sp"></span><button id="dbg-clear" type="button">clear</button><button id="dbg-off" type="button">off</button></div>
   <pre id="dbg-log"></pre>
@@ -861,18 +881,7 @@ document.getElementById('dbg-clear').addEventListener('click', () => {
   document.getElementById('dbg-log').textContent = '';
 });
 document.getElementById('dbg-off').addEventListener('click', () => setDebug(false));
-// Triple-tap on the title toggles debug.
-(() => {
-  const h1 = document.querySelector('header.top h1');
-  let taps = 0, lastTap = 0;
-  h1.addEventListener('click', () => {
-    const now = Date.now();
-    if (now - lastTap > 700) taps = 0;
-    taps++;
-    lastTap = now;
-    if (taps >= 3) { taps = 0; setDebug(!DEBUG); }
-  });
-})();
+document.getElementById('dbg-fab').addEventListener('click', () => setDebug(true));
 
 function normId(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
 CHARACTERS.forEach(c => { c.id = normId(c.n); });
