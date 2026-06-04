@@ -535,64 +535,6 @@ body.tag-sheet-open #tag-sheet { transform: translateY(0); }
   padding: 8px;
 }
 
-/* Debug overlay — toggle with the tiny fab in the bottom-left corner */
-#dbg-fab {
-  position: fixed;
-  bottom: 4px; left: 4px;
-  width: 20px; height: 20px;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 50%;
-  color: rgba(255,255,255,0.28);
-  font-size: 11px;
-  font-weight: 700;
-  font-family: ui-monospace, Menlo, monospace;
-  cursor: pointer;
-  z-index: 201;
-  padding: 0;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  -webkit-tap-highlight-color: transparent;
-}
-body.dbg-on #dbg-fab { display: none; }
-#dbg-overlay {
-  position: fixed;
-  bottom: 6px; left: 6px;
-  width: calc(100vw - 12px);
-  max-width: 260px;
-  max-height: 38vh;
-  background: rgba(0,0,0,0.88);
-  border: 1px solid #555;
-  color: #b0ff8e;
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 10px;
-  padding: 4px 6px;
-  border-radius: 8px;
-  z-index: 200;
-  display: none;
-  pointer-events: auto;
-}
-body.dbg-on #dbg-overlay { display: block; }
-#dbg-overlay .dbg-head {
-  display: flex; align-items: center; gap: 6px;
-  font-weight: 700; color: #ffaaaa; margin-bottom: 2px;
-}
-#dbg-overlay .dbg-head .sp { flex: 1; }
-#dbg-overlay button {
-  background: #333; color: #b0ff8e;
-  border: 1px solid #555; font-size: 10px;
-  padding: 1px 6px; border-radius: 4px;
-  font-family: inherit; cursor: pointer;
-}
-#dbg-overlay pre {
-  max-height: 30vh;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-  margin: 0;
-}
 </style>
 </head>
 <body class="script-tb">
@@ -651,11 +593,6 @@ body.dbg-on #dbg-overlay { display: block; }
   </div>
 </div>
 
-<button id="dbg-fab" type="button" aria-label="Toggle debug log">dbg</button>
-<div id="dbg-overlay">
-  <div class="dbg-head">debug<span class="sp"></span><button id="dbg-clear" type="button">clear</button><button id="dbg-off" type="button">off</button></div>
-  <pre id="dbg-log"></pre>
-</div>
 <div id="tag-sheet-bg" class="sheet-bg"></div>
 <div id="tag-sheet" class="sheet" role="dialog" aria-modal="true">
   <div class="sheet-head">
@@ -852,36 +789,6 @@ const CHARACTERS = [
 
 const FACTION_ORDER = ['townsfolk','outsider','minion','demon','traveller'];
 const FACTION_LABELS = {townsfolk:'Townsfolk',outsider:'Outsiders',minion:'Minions',demon:'Demons',traveller:'Travellers'};
-
-// --- Debug overlay -------------------------------------------------
-// Three ways to toggle:
-//   1. Triple-tap the "BLOOD ON THE CLOCKTOWER" title.
-//   2. Visit ".../#debug" (turn on) or ".../#nodebug" (turn off).
-//   3. Tap the 'off' button on the overlay itself.
-// State persists in localStorage across reloads.
-const DBG_KEY = 'botc-debug';
-if (location.hash.includes('nodebug')) localStorage.removeItem(DBG_KEY);
-else if (location.hash.includes('debug')) localStorage.setItem(DBG_KEY, '1');
-let DEBUG = localStorage.getItem(DBG_KEY) === '1';
-function setDebug(on) {
-  DEBUG = on;
-  document.body.classList.toggle('dbg-on', on);
-  if (on) localStorage.setItem(DBG_KEY, '1');
-  else localStorage.removeItem(DBG_KEY);
-}
-setDebug(DEBUG);
-function dbg(msg) {
-  if (!DEBUG) return;
-  const el = document.getElementById('dbg-log');
-  if (!el) return;
-  const t = new Date().toISOString().slice(14, 22);
-  el.textContent = (t + ' ' + msg + '\n' + (el.textContent || '')).slice(0, 2000);
-}
-document.getElementById('dbg-clear').addEventListener('click', () => {
-  document.getElementById('dbg-log').textContent = '';
-});
-document.getElementById('dbg-off').addEventListener('click', () => setDebug(false));
-document.getElementById('dbg-fab').addEventListener('click', () => setDebug(true));
 
 function normId(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
 CHARACTERS.forEach(c => { c.id = normId(c.n); });
@@ -1183,15 +1090,13 @@ const TAP_MOVE_CANCEL = 28;  // travel that cancels the tap too (drag, not tap)
 
 function triggerTap(idx) {
   const now = Date.now();
-  if (idx === lastTapIdx && now - lastTapAt < 500) { dbg('TAP dedup idx=' + idx); return; }
+  if (idx === lastTapIdx && now - lastTapAt < 500) return;
   lastTapIdx = idx; lastTapAt = now;
-  dbg('TAP -> openSheet ' + idx);
   openSheet(idx);
 }
 
 function tokenPointerDown(e) {
   const tok = e.target.closest('.token');
-  dbg('PD tgt=' + (e.target.tagName || '?') + ' tok=' + (tok ? tok.dataset.idx : 'null') + ' ptr=' + e.pointerType);
   if (!tok) return;
   const idx = parseInt(tok.dataset.idx, 10);
   lpEl = tok;
@@ -1216,7 +1121,6 @@ function tokenPointerUp(e) {
   const start = lpStart;
   const fired = lpFired;
   const cancelled = lpCancelled;
-  dbg('PU tok=' + (tok ? tok.dataset.idx : 'null') + ' fired=' + fired + ' canc=' + cancelled + ' sup=' + suppressNextClick + (start ? ' dx=' + Math.round(e.clientX - start.x) + ' dy=' + Math.round(e.clientY - start.y) : ''));
   if (tok) tok.classList.remove('pressed');
   if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
   lpEl = null; lpStart = null; lpFired = false; lpCancelled = false;
@@ -1229,7 +1133,6 @@ function tokenPointerUp(e) {
   }
 }
 function tokenPointerCancel() {
-  dbg('PC tok=' + (lpEl ? lpEl.dataset.idx : 'null'));
   if (lpEl) lpEl.classList.remove('pressed');
   if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
   lpEl = null; lpStart = null; lpFired = false; lpCancelled = false;
@@ -1247,7 +1150,6 @@ function tokenPointerMove(e) {
 }
 function tokenClick(e) {
   const tok = e.target.closest('.token');
-  dbg('CK tgt=' + (e.target.tagName || '?') + ' tok=' + (tok ? tok.dataset.idx : 'null') + ' sup=' + suppressNextClick);
   if (!tok) return;
   if (suppressNextClick) { suppressNextClick = false; return; }
   const idx = parseInt(tok.dataset.idx, 10);
