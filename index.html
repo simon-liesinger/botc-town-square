@@ -942,6 +942,10 @@ function renderRing() {
   if (Wd <= 0 || Hd <= 0) return;
 
   const PAD = 18, LABEL = 14;
+  // Spacing factor: 1.0 = tokens touching, 1.3 ≈ 30% gap. Bigger = more room
+  // for the player-name labels that hang below each token without colliding
+  // with the next seat clockwise.
+  const SPACING = 1.32;
   const maxHalf = Math.min(Wd, Hd) / 2;
   let d = 76;
   let availR = maxHalf - d/2 - PAD - LABEL;
@@ -950,9 +954,9 @@ function renderRing() {
     R = Math.min(availR, 110);
   } else {
     const sinHalf = Math.sin(Math.PI / N);
-    const neededR = d * 1.06 / (2 * sinHalf);
+    const neededR = d * SPACING / (2 * sinHalf);
     if (neededR > availR) {
-      d = Math.max(30, 2 * sinHalf * (maxHalf - PAD - LABEL) / (1.06 + sinHalf));
+      d = Math.max(30, 2 * sinHalf * (maxHalf - PAD - LABEL) / (SPACING + sinHalf));
       availR = maxHalf - d/2 - PAD - LABEL;
       R = availR;
     } else {
