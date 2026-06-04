@@ -35,6 +35,8 @@ h1 {
   letter-spacing: 1.5px;
   margin-bottom: 6px;
   font-weight: 700;
+  cursor: pointer;
+  user-select: none;
 }
 .script-row { display: flex; gap: 5px; align-items: center; }
 .script-btn {
@@ -832,13 +834,22 @@ const FACTION_ORDER = ['townsfolk','outsider','minion','demon','traveller'];
 const FACTION_LABELS = {townsfolk:'Townsfolk',outsider:'Outsiders',minion:'Minions',demon:'Demons',traveller:'Travellers'};
 
 // --- Debug overlay -------------------------------------------------
-// Persisted: visiting once with #debug in the URL keeps it on forever.
-// Visit with #nodebug to turn it back off.
+// Three ways to toggle:
+//   1. Triple-tap the "BLOOD ON THE CLOCKTOWER" title.
+//   2. Visit ".../#debug" (turn on) or ".../#nodebug" (turn off).
+//   3. Tap the 'off' button on the overlay itself.
+// State persists in localStorage across reloads.
 const DBG_KEY = 'botc-debug';
 if (location.hash.includes('nodebug')) localStorage.removeItem(DBG_KEY);
 else if (location.hash.includes('debug')) localStorage.setItem(DBG_KEY, '1');
-const DEBUG = localStorage.getItem(DBG_KEY) === '1';
-if (DEBUG) document.body.classList.add('dbg-on');
+let DEBUG = localStorage.getItem(DBG_KEY) === '1';
+function setDebug(on) {
+  DEBUG = on;
+  document.body.classList.toggle('dbg-on', on);
+  if (on) localStorage.setItem(DBG_KEY, '1');
+  else localStorage.removeItem(DBG_KEY);
+}
+setDebug(DEBUG);
 function dbg(msg) {
   if (!DEBUG) return;
   const el = document.getElementById('dbg-log');
@@ -849,10 +860,19 @@ function dbg(msg) {
 document.getElementById('dbg-clear').addEventListener('click', () => {
   document.getElementById('dbg-log').textContent = '';
 });
-document.getElementById('dbg-off').addEventListener('click', () => {
-  localStorage.removeItem(DBG_KEY);
-  document.body.classList.remove('dbg-on');
-});
+document.getElementById('dbg-off').addEventListener('click', () => setDebug(false));
+// Triple-tap on the title toggles debug.
+(() => {
+  const h1 = document.querySelector('header.top h1');
+  let taps = 0, lastTap = 0;
+  h1.addEventListener('click', () => {
+    const now = Date.now();
+    if (now - lastTap > 700) taps = 0;
+    taps++;
+    lastTap = now;
+    if (taps >= 3) { taps = 0; setDebug(!DEBUG); }
+  });
+})();
 
 function normId(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
 CHARACTERS.forEach(c => { c.id = normId(c.n); });
