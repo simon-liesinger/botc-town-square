@@ -185,8 +185,7 @@ body.fb-enabled .room-row { display: flex; }
 .token.pressed { transform: scale(0.92); }
 .token .seat-num {
   position: absolute;
-  top: -7px; left: 50%;
-  transform: translateX(-50%);
+  top: -6px; right: -8px;
   background: #16213e;
   color: #888;
   font-size: 10px; font-weight: 700;
@@ -194,6 +193,7 @@ body.fb-enabled .room-row { display: flex; }
   border-radius: 8px;
   border: 1px solid #333;
   z-index: 3;
+  pointer-events: none;
 }
 .token .icon-wrap {
   width: 100%; height: 100%;
@@ -1070,19 +1070,26 @@ function renderRing() {
 }
 
 // --- Tap + long-press on tokens ---
-// Tap can fire from either pointerup (quick release) or click — whichever
-// arrives first wins; the other is debounced by a 500ms (idx, time) guard.
-// Long-press is a 500ms timer started on pointerdown; when it fires we open
-// the tag sheet and arm suppressNextClick so the trailing click is swallowed.
-let lpTimer = null, lpStart = null, lpEl = null;
+// Tap can fire from either pointerup OR click — whichever arrives first
+// wins, the other is dedup'd by a 500ms (idx, time) guard. We don't gate
+// the pointerup tap on whether the long-press timer was still pending —
+// any normal finger jitter will have already cleared the timer, and we
+// can't rely on Android Chrome to dispatch a click after movement.
+//
+// State:
+//   lpFired     — true once the 500ms long-press fired (so pointerup
+//                 won't ALSO trigger the seat sheet)
+//   lpCancelled — true once finger has wandered > TAP_MOVE_CANCEL, so
+//                 a late-return-to-origin release isn't a tap
+let lpTimer = null, lpStart = null, lpEl = null, lpFired = false, lpCancelled = false;
 let suppressNextClick = false;
 let lastTapIdx = -1, lastTapAt = 0;
-const LP_MOVE_CANCEL = 14;
-const TAP_MOVE_CANCEL = 28;
+const LP_MOVE_CANCEL = 14;   // travel that cancels the long-press timer
+const TAP_MOVE_CANCEL = 28;  // travel that cancels the tap too (drag, not tap)
 
 function triggerTap(idx) {
   const now = Date.now();
-  if (idx === lastTapIdx && now - lastTapAt < 500) return; // dedup
+  if (idx === lastTapIdx && now - lastTapAt < 500) return; // dedup pointerup+click
   lastTapIdx = idx; lastTapAt = now;
   openSheet(idx);
 }
@@ -1093,28 +1100,30 @@ function tokenPointerDown(e) {
   const idx = parseInt(tok.dataset.idx, 10);
   lpEl = tok;
   lpStart = { x: e.clientX, y: e.clientY };
+  lpFired = false;
+  lpCancelled = false;
   suppressNextClick = false; // clear any stale flag from a prior long-press
   tok.classList.add('pressed');
   clearTimeout(lpTimer);
   lpTimer = setTimeout(() => {
     lpTimer = null;
-    if (!lpEl) return;
+    if (!lpEl || lpCancelled) return;
+    lpFired = true;
     if (navigator.vibrate) navigator.vibrate(15);
     suppressNextClick = true;
     openTagSheet(idx);
     lpEl.classList.remove('pressed');
-    lpEl = null; lpStart = null;
   }, 500);
 }
 function tokenPointerUp(e) {
   const tok = lpEl;
   const start = lpStart;
-  const hadTimer = !!lpTimer;
+  const fired = lpFired;
+  const cancelled = lpCancelled;
   if (tok) tok.classList.remove('pressed');
   if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
-  lpEl = null; lpStart = null;
-  // Quick release while the long-press timer was still pending = tap.
-  if (hadTimer && tok && start && !suppressNextClick) {
+  lpEl = null; lpStart = null; lpFired = false; lpCancelled = false;
+  if (tok && start && !fired && !cancelled && !suppressNextClick) {
     const dx = Math.abs(e.clientX - start.x), dy = Math.abs(e.clientY - start.y);
     if (dx < TAP_MOVE_CANCEL && dy < TAP_MOVE_CANCEL) {
       const idx = parseInt(tok.dataset.idx, 10);
@@ -1125,13 +1134,17 @@ function tokenPointerUp(e) {
 function tokenPointerCancel() {
   if (lpEl) lpEl.classList.remove('pressed');
   if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
-  lpEl = null; lpStart = null;
+  lpEl = null; lpStart = null; lpFired = false; lpCancelled = false;
 }
 function tokenPointerMove(e) {
-  if (!lpStart || !lpTimer) return;
-  if (Math.abs(e.clientX - lpStart.x) > LP_MOVE_CANCEL ||
-      Math.abs(e.clientY - lpStart.y) > LP_MOVE_CANCEL) {
+  if (!lpStart) return;
+  const dx = Math.abs(e.clientX - lpStart.x), dy = Math.abs(e.clientY - lpStart.y);
+  if ((dx > LP_MOVE_CANCEL || dy > LP_MOVE_CANCEL) && lpTimer) {
     clearTimeout(lpTimer); lpTimer = null;
+  }
+  if (dx > TAP_MOVE_CANCEL || dy > TAP_MOVE_CANCEL) {
+    lpCancelled = true;
+    if (lpEl) lpEl.classList.remove('pressed');
   }
 }
 function tokenClick(e) {
