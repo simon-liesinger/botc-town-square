@@ -862,38 +862,41 @@ async function initFirebase() {
   }
 }
 
+let latestSnap = {};
+
+function applySnapToLocal() {
+  // Merge cached server data into local seats. Only writes existing
+  // local seat indices — never grows the local array. Never pushes back.
+  let changed = false;
+  suppressIncoming = true;
+  Object.keys(latestSnap).forEach(k => {
+    const i = parseInt(k, 10);
+    if (Number.isNaN(i) || i < 0 || i >= state.players.length) return;
+    const p = state.players[i];
+    const incoming = latestSnap[k] || {};
+    const newDead = !!incoming.dead;
+    const newGhost = incoming.ghost === undefined ? true : !!incoming.ghost;
+    const newName = typeof incoming.name === 'string' ? incoming.name.slice(0, 20) : '';
+    if (p.dead !== newDead || p.ghost !== newGhost || p.name !== newName) {
+      p.dead = newDead; p.ghost = newGhost; p.name = newName; changed = true;
+    }
+  });
+  suppressIncoming = false;
+  if (changed) { saveState(); renderRing(); }
+}
+
 async function subscribeRoom(code) {
   if (fbDetach) { try { fbDetach(); } catch (e) {} fbDetach = null; }
+  latestSnap = {};
   if (!code) { setRoomStatus(''); return; }
   setRoomStatus('Connecting…');
   const f = await initFirebase();
   if (!f) return;
   const r = f.ref(f.db, `rooms/${code}/seats`);
-  let firstSnap = true;
   fbDetach = f.onValue(r, (snap) => {
-    suppressIncoming = true;
-    const data = snap.val() || {};
-    let changed = false;
-    Object.keys(data).forEach(k => {
-      const i = parseInt(k, 10);
-      if (Number.isNaN(i) || i < 0 || i >= state.players.length) return;
-      const p = state.players[i];
-      const incoming = data[k] || {};
-      const newDead = !!incoming.dead;
-      const newGhost = incoming.ghost === undefined ? true : !!incoming.ghost;
-      const newName = typeof incoming.name === 'string' ? incoming.name.slice(0, 20) : '';
-      if (p.dead !== newDead || p.ghost !== newGhost || p.name !== newName) {
-        p.dead = newDead; p.ghost = newGhost; p.name = newName; changed = true;
-      }
-    });
-    suppressIncoming = false;
-    if (changed) { saveState(); renderRing(); }
+    latestSnap = snap.val() || {};
+    applySnapToLocal();
     setRoomStatus('Synced', 'ok');
-    if (firstSnap) {
-      firstSnap = false;
-      // On first connect, push our own seats so peers see our state.
-      pushAllSeats();
-    }
   }, (err) => {
     setRoomStatus('Sync error', 'err');
     console.warn('Firebase error', err);
@@ -901,21 +904,14 @@ async function subscribeRoom(code) {
 }
 
 async function pushSeat(index) {
+  // Single-seat update. Safe — never overwrites or deletes other seats.
+  // Only fires from explicit user actions (name input, life buttons).
   if (!state.room || suppressIncoming) return;
   const f = await initFirebase();
   if (!f) return;
   const p = state.players[index];
   if (!p) return;
   try { await f.update(f.ref(f.db, `rooms/${state.room}/seats/${index}`), { dead: !!p.dead, ghost: !!p.ghost, name: p.name || '' }); }
-  catch (e) { setRoomStatus('Write failed', 'err'); }
-}
-async function pushAllSeats() {
-  if (!state.room) return;
-  const f = await initFirebase();
-  if (!f) return;
-  const payload = {};
-  state.players.forEach((p, i) => { payload[i] = { dead: !!p.dead, ghost: !!p.ghost, name: p.name || '' }; });
-  try { await f.set(f.ref(f.db, `rooms/${state.room}/seats`), payload); }
   catch (e) { setRoomStatus('Write failed', 'err'); }
 }
 
@@ -1225,7 +1221,8 @@ document.getElementById('del-player').addEventListener('click', () => {
   if (activeIdx < 0) return;
   state.players.splice(activeIdx, 1);
   saveState();
-  if (state.room) pushAllSeats();
+  // Don't touch server — orphan seat data stays put. Other devices that
+  // still have that seat keep their data; locally we just drop it.
   closeSheet(); renderRing();
 });
 
@@ -1360,14 +1357,16 @@ document.addEventListener('pointerdown', (e) => {
 document.getElementById('add-btn').addEventListener('click', () => {
   state.players.push(blankPlayer());
   saveState();
-  if (state.room) pushAllSeats();
+  // If this seat index already has server data (e.g. someone else's room
+  // is bigger), pull it into the new local seat so the joiner inherits it.
+  applySnapToLocal();
   renderRing();
 });
 document.getElementById('remove-btn').addEventListener('click', () => {
   if (!state.players.length) return;
   state.players.pop();
   saveState();
-  if (state.room) pushAllSeats();
+  // Server data for that index stays put for any peer still on that count.
   renderRing();
 });
 
