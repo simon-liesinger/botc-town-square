@@ -221,10 +221,11 @@ body.fb-enabled .room-row { display: flex; }
   white-space: nowrap;
   text-shadow: 0 0 4px #1a1a2e, 0 0 4px #1a1a2e;
   pointer-events: none;
-  max-width: 100px;
+  max-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.token .label.named { color: #fff; font-size: 11px; }
 
 .shroud {
   position: absolute;
@@ -440,10 +441,23 @@ body.tag-sheet-open #tag-sheet { transform: translateY(0); }
   line-height: 1.5;
 }
 
-/* Dead / ghost-vote controls inside the seat sheet */
+/* Name + dead / ghost-vote controls inside the seat sheet */
+.name-row { padding: 10px 4px 0; }
+.name-row input {
+  width: 100%;
+  background: #0f0f23;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: #e0e0e0;
+  padding: 9px 12px;
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+}
+.name-row input:focus { border-color: #4488CC; }
 .life-row {
   display: flex; gap: 6px;
-  padding: 10px 4px 4px;
+  padding: 8px 4px 4px;
   align-items: center;
 }
 .life-btn {
@@ -566,6 +580,9 @@ body.tag-sheet-open #tag-sheet { transform: translateY(0); }
     <button class="sheet-act close" id="sheet-close" type="button" aria-label="Close">&times;</button>
   </div>
   <div class="sheet-list" id="sheet-list">
+    <div class="name-row">
+      <input id="name-input" type="text" placeholder="Player name" maxlength="20" autocomplete="off" autocorrect="off" autocapitalize="words" spellcheck="false">
+    </div>
     <div class="life-row">
       <button class="life-btn alive" id="life-alive" type="button">Alive</button>
       <button class="life-btn dead" id="life-dead" type="button">Dead</button>
@@ -779,7 +796,7 @@ const CHAR_BY_ID = Object.fromEntries(CHARACTERS.map(c => [c.id, c]));
 // --- State ---
 const STORAGE_KEY = 'botc-grimoire-state-v2';
 const ROOM_KEY = 'botc-grimoire-room';
-function blankPlayer() { return { charId: null, dead: false, ghost: true, tags: [] }; }
+function blankPlayer() { return { charId: null, dead: false, ghost: true, name: '', tags: [] }; }
 function defaultState() { return { script: 'tb', customIds: [], players: [] }; }
 function migratePlayer(p) {
   if (!p || typeof p !== 'object') return blankPlayer();
@@ -787,6 +804,7 @@ function migratePlayer(p) {
     charId: p.charId || null,
     dead: !!p.dead,
     ghost: p.ghost === undefined ? true : !!p.ghost,
+    name: typeof p.name === 'string' ? p.name.slice(0, 20) : '',
     tags: Array.isArray(p.tags) ? p.tags.slice(0, 20).map(t => String(t).slice(0, 60)) : []
   };
 }
@@ -863,8 +881,9 @@ async function subscribeRoom(code) {
       const incoming = data[k] || {};
       const newDead = !!incoming.dead;
       const newGhost = incoming.ghost === undefined ? true : !!incoming.ghost;
-      if (p.dead !== newDead || p.ghost !== newGhost) {
-        p.dead = newDead; p.ghost = newGhost; changed = true;
+      const newName = typeof incoming.name === 'string' ? incoming.name.slice(0, 20) : '';
+      if (p.dead !== newDead || p.ghost !== newGhost || p.name !== newName) {
+        p.dead = newDead; p.ghost = newGhost; p.name = newName; changed = true;
       }
     });
     suppressIncoming = false;
@@ -887,7 +906,7 @@ async function pushSeat(index) {
   if (!f) return;
   const p = state.players[index];
   if (!p) return;
-  try { await f.update(f.ref(f.db, `rooms/${state.room}/seats/${index}`), { dead: !!p.dead, ghost: !!p.ghost }); }
+  try { await f.update(f.ref(f.db, `rooms/${state.room}/seats/${index}`), { dead: !!p.dead, ghost: !!p.ghost, name: p.name || '' }); }
   catch (e) { setRoomStatus('Write failed', 'err'); }
 }
 async function pushAllSeats() {
@@ -895,7 +914,7 @@ async function pushAllSeats() {
   const f = await initFirebase();
   if (!f) return;
   const payload = {};
-  state.players.forEach((p, i) => { payload[i] = { dead: !!p.dead, ghost: !!p.ghost }; });
+  state.players.forEach((p, i) => { payload[i] = { dead: !!p.dead, ghost: !!p.ghost, name: p.name || '' }; });
   try { await f.set(f.ref(f.db, `rooms/${state.room}/seats`), payload); }
   catch (e) { setRoomStatus('Write failed', 'err'); }
 }
@@ -971,15 +990,19 @@ function renderRing() {
       img.src = ch.i; img.alt = ch.n; img.loading = 'lazy';
       wrap.appendChild(img);
       tok.appendChild(wrap);
-      const lbl = document.createElement('span');
-      lbl.className = 'label';
-      lbl.textContent = ch.n;
-      tok.appendChild(lbl);
     } else {
       const txt = document.createElement('span');
       txt.style.opacity = '0.5';
       txt.textContent = '+';
       tok.appendChild(txt);
+    }
+    // Label: player name if set, else character name. Empty seats with no name get nothing.
+    const labelText = p.name || (ch ? ch.n : '');
+    if (labelText) {
+      const lbl = document.createElement('span');
+      lbl.className = 'label' + (p.name ? ' named' : '');
+      lbl.textContent = labelText;
+      tok.appendChild(lbl);
     }
 
     if (p.dead) {
@@ -1179,6 +1202,7 @@ function openSheet(idx) {
     });
   }
   renderLifeRow();
+  document.getElementById('name-input').value = p.name || '';
   document.body.classList.add('sheet-open');
   document.getElementById('sheet-list').scrollTop = 0;
 }
@@ -1200,6 +1224,19 @@ document.getElementById('del-player').addEventListener('click', () => {
   if (state.room) pushAllSeats();
   closeSheet(); renderRing();
 });
+
+const nameInput = document.getElementById('name-input');
+function commitName() {
+  if (activeIdx < 0) return;
+  const v = nameInput.value.trim().slice(0, 20);
+  if (state.players[activeIdx].name === v) return;
+  state.players[activeIdx].name = v;
+  saveState();
+  renderRing();
+  pushSeat(activeIdx);
+}
+nameInput.addEventListener('input', commitName);
+nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nameInput.blur(); } });
 
 document.getElementById('life-alive').addEventListener('click', () => {
   if (activeIdx < 0) return;

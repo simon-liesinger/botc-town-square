@@ -66,6 +66,7 @@ across multiple phones in the same room:
 |---|---|
 | Dead / alive flag per seat | yes |
 | Ghost-vote available per seat | yes |
+| Player name per seat | yes |
 | Character assignments | no — each device picks its own |
 | Script (TB / S&V / BMR / custom) | no |
 | Seat count | no — by index; if devices disagree on count, the higher seats just won't sync |
