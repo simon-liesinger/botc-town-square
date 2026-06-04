@@ -1177,8 +1177,11 @@ function renderLifeRow() {
   g.classList.toggle('disabled', !p.dead);
 }
 
+let sheetOpenedAt = 0;
+let tagSheetOpenedAt = 0;
 function openSheet(idx) {
   activeIdx = idx;
+  sheetOpenedAt = Date.now();
   const p = state.players[idx];
   const ch = p.charId ? CHAR_BY_ID[p.charId] : null;
   sheetTitleEl.innerHTML = `<span class="seat">Seat ${idx+1}</span>` + (ch ? ` &middot; <span style="color:#ccc">${ch.n}</span>` : '');
@@ -1224,7 +1227,13 @@ function closeSheet() {
   activeIdx = -1;
 }
 document.getElementById('sheet-close').addEventListener('click', closeSheet);
-document.getElementById('sheet-bg').addEventListener('click', closeSheet);
+document.getElementById('sheet-bg').addEventListener('click', () => {
+  // Ignore the click that may be the synthetic trailing-click from the
+  // same tap that opened the sheet (Android Chrome can hit-test the now
+  // pointer-events:auto bg instead of the token).
+  if (Date.now() - sheetOpenedAt < 350) return;
+  closeSheet();
+});
 document.getElementById('clear-char').addEventListener('click', () => {
   if (activeIdx < 0) return;
   state.players[activeIdx].charId = null;
@@ -1280,6 +1289,7 @@ let tagIdx = -1;
 const tagSheetEl = document.getElementById('tag-sheet');
 function openTagSheet(idx) {
   tagIdx = idx;
+  tagSheetOpenedAt = Date.now();
   const p = state.players[idx];
   const ch = p.charId ? CHAR_BY_ID[p.charId] : null;
   document.getElementById('tag-sheet-title').innerHTML = `<span class="seat">Seat ${idx+1}</span>${ch ? ' &middot; <span style="color:#ccc">'+ch.n+'</span>' : ''} &mdash; tags`;
@@ -1338,7 +1348,10 @@ function addTagFromInput() {
   renderRing();
 }
 document.getElementById('tag-sheet-close').addEventListener('click', closeTagSheet);
-document.getElementById('tag-sheet-bg').addEventListener('click', closeTagSheet);
+document.getElementById('tag-sheet-bg').addEventListener('click', () => {
+  if (Date.now() - tagSheetOpenedAt < 350) return;
+  closeTagSheet();
+});
 document.getElementById('tag-add').addEventListener('click', addTagFromInput);
 document.getElementById('tag-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); addTagFromInput(); }
