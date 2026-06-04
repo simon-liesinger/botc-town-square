@@ -1046,14 +1046,23 @@ function renderRing() {
   });
 }
 
-// --- Tap (native click) + long-press (pointerdown timer) on tokens ---
-// Tap uses the browser's click event — most reliable cross-device behaviour.
-// Long-press is a 500ms timer started on pointerdown; if it fires we open the
-// tag sheet and set a flag to swallow the subsequent click. Movement >= ~14px
-// cancels the timer so a drag doesn't accidentally trigger long-press.
-let lpTimer = null, lpStart = null, lpEl = null, lpPointerType = '';
+// --- Tap + long-press on tokens ---
+// Tap can fire from either pointerup (quick release) or click — whichever
+// arrives first wins; the other is debounced by a 500ms (idx, time) guard.
+// Long-press is a 500ms timer started on pointerdown; when it fires we open
+// the tag sheet and arm suppressNextClick so the trailing click is swallowed.
+let lpTimer = null, lpStart = null, lpEl = null;
 let suppressNextClick = false;
+let lastTapIdx = -1, lastTapAt = 0;
 const LP_MOVE_CANCEL = 14;
+const TAP_MOVE_CANCEL = 28;
+
+function triggerTap(idx) {
+  const now = Date.now();
+  if (idx === lastTapIdx && now - lastTapAt < 500) return; // dedup
+  lastTapIdx = idx; lastTapAt = now;
+  openSheet(idx);
+}
 
 function tokenPointerDown(e) {
   const tok = e.target.closest('.token');
@@ -1061,7 +1070,7 @@ function tokenPointerDown(e) {
   const idx = parseInt(tok.dataset.idx, 10);
   lpEl = tok;
   lpStart = { x: e.clientX, y: e.clientY };
-  lpPointerType = e.pointerType || 'touch';
+  suppressNextClick = false; // clear any stale flag from a prior long-press
   tok.classList.add('pressed');
   clearTimeout(lpTimer);
   lpTimer = setTimeout(() => {
@@ -1074,7 +1083,23 @@ function tokenPointerDown(e) {
     lpEl = null; lpStart = null;
   }, 500);
 }
-function tokenPointerEnd() {
+function tokenPointerUp(e) {
+  const tok = lpEl;
+  const start = lpStart;
+  const hadTimer = !!lpTimer;
+  if (tok) tok.classList.remove('pressed');
+  if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+  lpEl = null; lpStart = null;
+  // Quick release while the long-press timer was still pending = tap.
+  if (hadTimer && tok && start && !suppressNextClick) {
+    const dx = Math.abs(e.clientX - start.x), dy = Math.abs(e.clientY - start.y);
+    if (dx < TAP_MOVE_CANCEL && dy < TAP_MOVE_CANCEL) {
+      const idx = parseInt(tok.dataset.idx, 10);
+      if (!isNaN(idx)) triggerTap(idx);
+    }
+  }
+}
+function tokenPointerCancel() {
   if (lpEl) lpEl.classList.remove('pressed');
   if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
   lpEl = null; lpStart = null;
@@ -1083,7 +1108,7 @@ function tokenPointerMove(e) {
   if (!lpStart || !lpTimer) return;
   if (Math.abs(e.clientX - lpStart.x) > LP_MOVE_CANCEL ||
       Math.abs(e.clientY - lpStart.y) > LP_MOVE_CANCEL) {
-    tokenPointerEnd();
+    clearTimeout(lpTimer); lpTimer = null;
   }
 }
 function tokenClick(e) {
@@ -1091,12 +1116,11 @@ function tokenClick(e) {
   if (!tok) return;
   if (suppressNextClick) { suppressNextClick = false; return; }
   const idx = parseInt(tok.dataset.idx, 10);
-  openSheet(idx);
+  if (!isNaN(idx)) triggerTap(idx);
 }
 ringEl.addEventListener('pointerdown', tokenPointerDown);
-ringEl.addEventListener('pointerup', tokenPointerEnd);
-ringEl.addEventListener('pointercancel', tokenPointerEnd);
-ringEl.addEventListener('pointerleave', tokenPointerEnd);
+ringEl.addEventListener('pointerup', tokenPointerUp);
+ringEl.addEventListener('pointercancel', tokenPointerCancel);
 ringEl.addEventListener('pointermove', tokenPointerMove);
 ringEl.addEventListener('click', tokenClick);
 ringEl.addEventListener('contextmenu', e => e.preventDefault());
