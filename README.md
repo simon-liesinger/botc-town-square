@@ -56,9 +56,17 @@ across multiple phones in the same room:
    };
    ```
 6. Commit and push. Once deployed, a **ROOM** field appears in the header.
-   - Tap **New** to generate a code, or type one in.
-   - Anyone visiting the page on any device and entering the same code stays in sync.
+   - Tap **New** to generate a writer code (10 characters). The viewer code
+     (first 6 characters) appears below — share that with your players.
+   - **Writer code** holders see the full UI (dead/ghost/name controls).
+   - **Viewer code** holders are read-only (controls fade out, a READ-ONLY
+     badge appears next to the ROOM input). They still receive live updates.
    - Tap **Off** to disable sync.
+
+   Enforcement is app-level. Anyone who knows the writer code (or with
+   Firebase API knowledge) can technically write either way. For a friendly
+   game this is fine; if you need server-enforced write protection you'd
+   need to layer on Firebase Anonymous Auth + custom rules.
 
 ### What syncs / what doesn't
 

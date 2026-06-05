@@ -113,6 +113,51 @@ body.paste-open #paste-panel { display: block; }
 }
 body.fb-enabled .room-row { display: flex; }
 .room-row label { color: #888; font-weight: 600; letter-spacing: 0.5px; }
+.share-row {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #888;
+}
+body.writer-mode .share-row { display: flex; }
+.share-row .v-label { color: #888; font-weight: 600; letter-spacing: 0.5px; }
+.share-row .v-code {
+  color: #b088f9;
+  font-family: ui-monospace, Menlo, monospace;
+  letter-spacing: 2px;
+  font-weight: 700;
+}
+.share-row button {
+  background: none;
+  border: 1px solid #555;
+  color: #aaa;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.share-row .copy-ok { color: #7fcd91; }
+.viewer-badge {
+  display: none;
+  margin-left: auto;
+  background: #1a2440;
+  border: 1px solid #4488CC;
+  color: #4488CC;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+body.viewer-mode .viewer-badge { display: inline-block; }
+/* viewer mode disables write controls */
+body.viewer-mode #name-input,
+body.viewer-mode .life-btn { opacity: 0.4; pointer-events: none; }
+body.viewer-mode #name-input { background: #0a0a17; }
 .room-row input {
   flex: 1; min-width: 0;
   background: #0f0f23;
@@ -555,10 +600,16 @@ body.tag-sheet-open #tag-sheet { transform: translateY(0); }
   </div>
   <div class="room-row">
     <label for="room-input">ROOM</label>
-    <input id="room-input" placeholder="code to sync" maxlength="12" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+    <input id="room-input" placeholder="code to sync" maxlength="10" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
     <button class="room-gen" id="room-gen" type="button">New</button>
     <button class="room-clear" id="room-clear" type="button">Off</button>
     <span class="room-status" id="room-status"></span>
+    <span class="viewer-badge">READ-ONLY</span>
+  </div>
+  <div class="share-row">
+    <span class="v-label">VIEWER</span>
+    <span class="v-code" id="viewer-code"></span>
+    <button id="copy-viewer" type="button">Copy</button>
   </div>
 </header>
 
@@ -842,6 +893,35 @@ function activeChars() {
   return CHARACTERS.filter(c => c.s === state.script);
 }
 
+// --- Room code scheme ---
+// Writer code (10 chars) = full read+write access. The first 6 chars are the
+// viewer code, which is also the Firebase path. Anyone with the viewer code
+// can read; only someone with the matching writer code gets write UI.
+// Enforcement is app-level (Firebase rules don't distinguish — see README).
+const ROOM_WRITER_LEN = 10;
+const ROOM_VIEWER_LEN = 6;
+const ROOM_CODE_ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const ROOM_CODE_PATTERN = /^[A-Z0-9]+$/;
+
+function isWriterCode(code) {
+  return !!code && code.length === ROOM_WRITER_LEN && ROOM_CODE_PATTERN.test(code);
+}
+function getRoomPath(code) {
+  if (!code) return '';
+  return isWriterCode(code) ? code.slice(0, ROOM_VIEWER_LEN) : code;
+}
+function getViewerCode(code) {
+  return getRoomPath(code);
+}
+function isWriting() { return isWriterCode(state.room); }
+function genWriterCode() {
+  let s = '';
+  for (let i = 0; i < ROOM_WRITER_LEN; i++) {
+    s += ROOM_CODE_ALPHA[Math.floor(Math.random() * ROOM_CODE_ALPHA.length)];
+  }
+  return s;
+}
+
 // --- Firebase ---
 const FB_ENABLED = !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.databaseURL);
 let fb = null;
@@ -893,7 +973,7 @@ async function subscribeRoom(code) {
   setRoomStatus('Connecting…');
   const f = await initFirebase();
   if (!f) return;
-  const r = f.ref(f.db, `rooms/${code}/seats`);
+  const r = f.ref(f.db, `rooms/${getRoomPath(code)}/seats`);
   fbDetach = f.onValue(r, (snap) => {
     latestSnap = snap.val() || {};
     applySnapToLocal();
@@ -907,12 +987,13 @@ async function subscribeRoom(code) {
 async function pushSeat(index) {
   // Single-seat update. Safe — never overwrites or deletes other seats.
   // Only fires from explicit user actions (name input, life buttons).
-  if (!state.room || suppressIncoming) return;
+  // Requires the user to be holding a writer code; viewer codes can't push.
+  if (!state.room || !isWriting() || suppressIncoming) return;
   const f = await initFirebase();
   if (!f) return;
   const p = state.players[index];
   if (!p) return;
-  try { await f.update(f.ref(f.db, `rooms/${state.room}/seats/${index}`), { dead: !!p.dead, ghost: !!p.ghost, name: p.name || '' }); }
+  try { await f.update(f.ref(f.db, `rooms/${getRoomPath(state.room)}/seats/${index}`), { dead: !!p.dead, ghost: !!p.ghost, name: p.name || '' }); }
   catch (e) { setRoomStatus('Write failed', 'err'); }
 }
 
@@ -1449,21 +1530,51 @@ function loadPaste() {
 
 // --- Room code wiring ---
 const roomInput = document.getElementById('room-input');
+const viewerCodeEl = document.getElementById('viewer-code');
+const copyViewerBtn = document.getElementById('copy-viewer');
 roomInput.value = state.room || '';
+function updateRoomMode() {
+  const writer = isWriterCode(state.room);
+  const viewer = !!state.room && !writer;
+  document.body.classList.toggle('writer-mode', writer);
+  document.body.classList.toggle('viewer-mode', viewer);
+  viewerCodeEl.textContent = writer ? getViewerCode(state.room) : '';
+  if (copyViewerBtn) {
+    copyViewerBtn.textContent = 'Copy';
+    copyViewerBtn.classList.remove('copy-ok');
+  }
+}
 function commitRoom(val) {
-  const cleaned = (val || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+  const cleaned = (val || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, ROOM_WRITER_LEN);
   state.room = cleaned;
   saveRoom();
   roomInput.value = cleaned;
+  updateRoomMode();
   subscribeRoom(cleaned);
 }
 roomInput.addEventListener('change', () => commitRoom(roomInput.value));
 roomInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); roomInput.blur(); } });
-document.getElementById('room-gen').addEventListener('click', () => {
-  const code = Array.from({length: 6}, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('');
-  commitRoom(code);
+document.getElementById('room-gen').addEventListener('click', () => commitRoom(genWriterCode()));
+document.getElementById('room-clear').addEventListener('click', () => commitRoom(''));
+copyViewerBtn.addEventListener('click', async () => {
+  const code = viewerCodeEl.textContent;
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    copyViewerBtn.textContent = 'Copied';
+    copyViewerBtn.classList.add('copy-ok');
+    setTimeout(() => {
+      copyViewerBtn.textContent = 'Copy';
+      copyViewerBtn.classList.remove('copy-ok');
+    }, 1500);
+  } catch (e) {
+    // Clipboard API unavailable — fall back to selecting the text
+    const range = document.createRange();
+    range.selectNodeContents(viewerCodeEl);
+    const sel = window.getSelection();
+    sel.removeAllRanges(); sel.addRange(range);
+  }
 });
-document.getElementById('room-clear').addEventListener('click', () => { commitRoom(''); });
 
 // --- Resize handling ---
 let resizeT;
@@ -1475,6 +1586,7 @@ if (window.ResizeObserver) new ResizeObserver(scheduleRender).observe(stageEl);
 // --- Init ---
 if (FB_ENABLED) document.body.classList.add('fb-enabled');
 updateScriptUI();
+updateRoomMode();
 renderRing();
 if (state.room) subscribeRoom(state.room);
 </script>
