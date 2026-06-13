@@ -845,11 +845,35 @@ function normId(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
 CHARACTERS.forEach(c => { c.id = normId(c.n); });
 const CHAR_BY_ID = Object.fromEntries(CHARACTERS.map(c => [c.id, c]));
 
+// --- Homebrew (bloodstar / official Script Tool) character support ---
+const TEAM_TO_FACTION = {townsfolk:'townsfolk',outsider:'outsider',minion:'minion',demon:'demon',traveler:'traveller',traveller:'traveller',fabled:'fabled',loric:'fabled'};
+// Drop previously-imported homebrew characters (a fresh paste replaces them).
+function clearCustomChars() {
+  for (let i = CHARACTERS.length - 1; i >= 0; i--) {
+    if (CHARACTERS[i].s === 'custom') { delete CHAR_BY_ID[CHARACTERS[i].id]; CHARACTERS.splice(i, 1); }
+  }
+}
+// Register one homebrew character {n,f,i} into the pool. Returns its id.
+function registerCustomChar(def) {
+  const n = String(def.n || '').trim(); if (!n) return null;
+  const id = normId(n);
+  if (!CHAR_BY_ID[id]) { const c = {n, s:'custom', f: def.f || 'townsfolk', i: def.i || '', id}; CHARACTERS.push(c); CHAR_BY_ID[id] = c; }
+  return id;
+}
+// In-token character-name label, shown when there's no token art (homebrew with no
+// usable image, e.g. a network that blocks the CDN). Sized relative to the token.
+function charNameLabel(name) {
+  const s = document.createElement('span');
+  s.textContent = name;
+  s.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 3px;font-size:0.42em;line-height:1.05;font-weight:600;overflow:hidden';
+  return s;
+}
+
 // --- State ---
 const STORAGE_KEY = 'botc-grimoire-state-v2';
 const ROOM_KEY = 'botc-grimoire-room';
 function blankPlayer() { return { charId: null, dead: false, ghost: true, name: '', tags: [] }; }
-function defaultState() { return { script: 'tb', customIds: [], players: [] }; }
+function defaultState() { return { script: 'tb', customIds: [], customChars: [], players: [] }; }
 function migratePlayer(p) {
   if (!p || typeof p !== 'object') return blankPlayer();
   return {
@@ -871,15 +895,18 @@ try {
       state = {
         script: s.script || 'tb',
         customIds: Array.isArray(s.customIds) ? s.customIds : [],
+        customChars: Array.isArray(s.customChars) ? s.customChars : [],
         players: s.players.map(migratePlayer)
       };
+      // Re-register persisted homebrew characters so their tokens resolve.
+      state.customChars.forEach(registerCustomChar);
     }
   }
 } catch (e) {}
 state.room = (localStorage.getItem(ROOM_KEY) || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
 
 function saveState() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({script: state.script, customIds: state.customIds, players: state.players})); } catch (e) {}
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({script: state.script, customIds: state.customIds, customChars: state.customChars || [], players: state.players})); } catch (e) {}
 }
 function saveRoom() {
   try {
@@ -1066,12 +1093,18 @@ function renderRing() {
     const ch = p.charId ? CHAR_BY_ID[p.charId] : null;
     if (ch) {
       tok.classList.add('f-' + ch.f);
-      const wrap = document.createElement('span');
-      wrap.className = 'icon-wrap';
-      const img = document.createElement('img');
-      img.src = ch.i; img.alt = ch.n; img.loading = 'lazy';
-      wrap.appendChild(img);
-      tok.appendChild(wrap);
+      if (ch.i) {
+        const wrap = document.createElement('span');
+        wrap.className = 'icon-wrap';
+        const img = document.createElement('img');
+        img.src = ch.i; img.alt = ch.n; img.loading = 'lazy';
+        // No token art (e.g. blocked CDN) → fall back to the character name.
+        img.onerror = () => { wrap.remove(); tok.appendChild(charNameLabel(ch.n)); };
+        wrap.appendChild(img);
+        tok.appendChild(wrap);
+      } else {
+        tok.appendChild(charNameLabel(ch.n));
+      }
     } else {
       const txt = document.createElement('span');
       txt.style.opacity = '0.5';
@@ -1286,7 +1319,7 @@ function openSheet(idx) {
         const cell = document.createElement('button');
         cell.className = 'char-cell f-' + c.f + (p.charId === c.id ? ' selected' : '');
         cell.type = 'button';
-        cell.innerHTML = `<img src="${c.i}" alt="" loading="lazy"><span class="nm">${c.n}</span>`;
+        cell.innerHTML = (c.i ? `<img src="${c.i}" alt="" loading="lazy" onerror="this.style.display='none'">` : '') + `<span class="nm">${c.n}</span>`;
         cell.addEventListener('click', () => {
           state.players[activeIdx].charId = c.id;
           saveState();
@@ -1510,21 +1543,42 @@ function loadPaste() {
   try { parsed = JSON.parse(txt); }
   catch (e) { pasteStatus.textContent = 'Invalid JSON'; pasteStatus.className = 'err'; return; }
   if (!Array.isArray(parsed)) { pasteStatus.textContent = 'Expected a JSON array'; pasteStatus.className = 'err'; return; }
-  const ids = []; const seen = new Set(); const unknown = [];
+  // A fresh paste replaces any previously-imported homebrew characters.
+  clearCustomChars();
+  const ids = []; const seen = new Set(); const customDefs = [];
+  let homebrew = 0, unknown = 0;
+  const addId = id => { if (id && !seen.has(id)) { seen.add(id); ids.push(id); } };
   parsed.forEach(item => {
-    let raw;
-    if (typeof item === 'string') raw = item;
-    else if (item && typeof item === 'object' && typeof item.id === 'string') raw = item.id;
-    else return;
-    if (!raw || raw.startsWith('_')) return;
-    const id = normId(raw);
-    if (CHAR_BY_ID[id]) { if (!seen.has(id)) { seen.add(id); ids.push(id); } }
-    else unknown.push(raw);
+    if (typeof item === 'string') {
+      if (item.startsWith('_')) return;
+      const id = normId(item);
+      if (CHAR_BY_ID[id]) addId(id); else unknown++;
+      return;
+    }
+    if (!item || typeof item !== 'object') return;
+    const idRaw = String(item.id || '');
+    if (idRaw === '_meta' || idRaw.startsWith('_')) return;
+    const name = String(item.name || item.id || '').trim();
+    if (!name) return;
+    const refId = normId(item.id || item.name);
+    if (CHAR_BY_ID[refId]) { addId(refId); return; }       // reference to a built-in
+    if (item.team || item.ability) {                        // full homebrew definition
+      const f = TEAM_TO_FACTION[String(item.team || '').toLowerCase()] || 'townsfolk';
+      let img = '';
+      if (typeof item.image === 'string') img = item.image;
+      else if (Array.isArray(item.image) && item.image.length) img = String(item.image[0]);
+      const cid = registerCustomChar({n: name, f, i: img});
+      if (cid) { customDefs.push({n: name, f, i: img}); addId(cid); homebrew++; }
+      return;
+    }
+    unknown++;
   });
-  if (!ids.length) { pasteStatus.textContent = 'No matching characters found'; pasteStatus.className = 'err'; return; }
-  state.script = 'custom'; state.customIds = ids;
+  if (!ids.length) { clearCustomChars(); pasteStatus.textContent = 'No matching characters found'; pasteStatus.className = 'err'; return; }
+  state.script = 'custom'; state.customIds = ids; state.customChars = customDefs;
   saveState(); updateScriptUI();
-  pasteStatus.textContent = `Loaded ${ids.length} characters` + (unknown.length ? ` (skipped ${unknown.length} unknown)` : '');
+  pasteStatus.textContent = `Loaded ${ids.length} characters`
+    + (homebrew ? ` (${homebrew} homebrew)` : '')
+    + (unknown ? ` (skipped ${unknown} unknown)` : '');
   pasteStatus.className = 'ok';
 }
 
